@@ -1,4 +1,4 @@
-name: 'Zigbee Multi Switch and Child Mc'
+name: 'Zigbee Multi Switch and Child Mc - SK'
 packageKey: 'Zigbee_Multi_Switch-v5'
 description: 'Devices: https://github.com/Mariano-Github/Edge-Drivers-Beta/blob/main/zigbee-multi-switch-v4.5-childs-edge/fingerprints.yml'
 permissions:

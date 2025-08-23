@@ -244,6 +244,28 @@ local function do_preferences (driver, device)
         local mfg_code = 0x115F
         device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (1))
         device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (2))
+      -- Decoupling preferences for lumi.switch.acn040 (verified IDs)
+      elseif id == "decoupleSwitch1" then
+        local value_send = tonumber(newParameterValue)  -- 0=decoupled, 1=coupled (control_relay)
+        local data_type = data_types.Uint8
+        local cluster_id = 0xFCC0
+        local attr_id = 0x0200  -- Operation mode attribute (exactly as zigbee-herdsman-converters)
+        local mfg_code = 0x115F
+        device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (1))
+      elseif id == "decoupleSwitch2" then
+        local value_send = tonumber(newParameterValue)  -- 0=decoupled, 1=coupled (control_relay)
+        local data_type = data_types.Uint8
+        local cluster_id = 0xFCC0
+        local attr_id = 0x0200  -- Operation mode attribute (exactly as zigbee-herdsman-converters)
+        local mfg_code = 0x115F
+        device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (2))
+      elseif id == "decoupleSwitch3" then
+        local value_send = tonumber(newParameterValue)  -- 0=decoupled, 1=coupled (control_relay)
+        local data_type = data_types.Uint8
+        local cluster_id = 0xFCC0
+        local attr_id = 0x0200  -- Operation mode attribute (exactly as zigbee-herdsman-converters)
+        local mfg_code = 0x115F
+        device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (3))
       end
       -- Call to Create child device
       local profile_type = "child-switch"
@@ -468,6 +490,15 @@ local function component_to_endpoint(device, component_id)
   elseif device:get_model() == "LM-SZ2" or device:get_model() == "LM-SZ3" or device:get_model() == "LM-SZ4" then
     ep_ini = 1
     endpoint_odd = true -- use odd endpoints only LUMI and Lumi Vietnam
+  elseif device:get_model() == "lumi.switch.acn040" then
+    -- Special mapping for lumi.acn040 (corrected: endpoints 1,2,3)
+    if component_id == "main" then
+      return 1
+    elseif component_id == "switch2" then
+      return 2
+    elseif component_id == "switch3" then
+      return 3
+    end
   else
     ep_ini = device.fingerprinted_endpoint_id
   end
@@ -524,6 +555,16 @@ local function endpoint_to_component(device, ep)
   elseif device:get_model() == "LM-SZ2" or device:get_model() == "LM-SZ3" or device:get_model() == "LM-SZ4" then
       ep_ini = 1
       endpoint_odd = true -- use odd endpoints only LUMI and Lumi Vietnam
+  elseif device:get_model() == "lumi.switch.acn040" then
+    -- Special mapping for lumi.acn040 (corrected: endpoints 1,2,3)
+    if ep == 1 then
+      return "main"
+    elseif ep == 2 then
+      return "switch2"
+    elseif ep == 3 then
+      return "switch3"
+    end
+    return nil -- Unknown endpoint for this device
   else
     ep_ini = device.fingerprinted_endpoint_id
   end
@@ -560,7 +601,8 @@ end
 
 --do_configure
 local function do_configure(driver, device)
-
+  print("DEBUG: do_configure called for device:", device.label, "model:", device:get_model())
+  
   --print("Device table >>>>>>",utils.stringify_table(device))
   --print("Driver table >>>>>>",utils.stringify_table(driver))
 
@@ -644,6 +686,49 @@ local function do_configure(driver, device)
       device.thread:call_with_delay(3, function(d)
         print("<<< Read Aqara T2 custom Preference attributes >>>")
         local attr_ids = {0x02D0, 0x0289, 0x00EB, 0x0517} 
+        device:send(read_attribute_function (device, data_types.ClusterId(0xFCC0), attr_ids))
+      end)
+    end
+
+    -- Configuration for lumi.switch.acn040 (3-switch with decoupling) - Verified IDs
+    print("DEBUG: Device model is:", device:get_model())
+    if device:get_model() == "lumi.switch.acn040" then
+      print("DEBUG: MATCHED lumi.switch.acn040 - Running decoupling configuration!")
+      print("<< Send preferences for Aqara 3-Switch Decouple >>")
+      
+      -- Set decoupling preferences if they exist (endpoints 1,2,3 corrected for lumi.acn040)
+      if device.preferences.decoupleSwitch1 ~= nil then
+        local value_send = tonumber(device.preferences.decoupleSwitch1)  -- 0=decoupled, 1=coupled (control_relay)
+        local data_type = data_types.Uint8
+        local cluster_id = 0xFCC0
+        local attr_id = 0x0200  -- Operation mode attribute (exactly as zigbee-herdsman-converters)
+        local mfg_code = 0x115F
+        device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (1))
+      end
+      
+      if device.preferences.decoupleSwitch2 ~= nil then
+        local value_send = tonumber(device.preferences.decoupleSwitch2)  -- 0=decoupled, 1=coupled (control_relay)
+        local data_type = data_types.Uint8
+        local cluster_id = 0xFCC0
+        local attr_id = 0x0200  -- Operation mode attribute (exactly as zigbee-herdsman-converters)
+        local mfg_code = 0x115F
+        device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (2))
+      end
+      
+      if device.preferences.decoupleSwitch3 ~= nil then
+        local value_send = tonumber(device.preferences.decoupleSwitch3)  -- 0=decoupled, 1=coupled (control_relay)
+        local data_type = data_types.Uint8
+        local cluster_id = 0xFCC0
+        local attr_id = 0x0200  -- Operation mode attribute (exactly as zigbee-herdsman-converters)
+        local mfg_code = 0x115F
+        device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (3))
+      end
+
+      -- Read current decoupling states after configuration
+      device.thread:call_with_delay(3, function(d)
+        print("<<< Read Aqara 3-Switch decoupling attributes >>>")
+        -- Read decoupling attribute (0x0200) exactly as zigbee-herdsman-converters
+        local attr_ids = {0x0200} 
         device:send(read_attribute_function (device, data_types.ClusterId(0xFCC0), attr_ids))
       end)
     end
@@ -858,6 +943,50 @@ local function device_init (driver, device)
     device.thread:call_with_delay(4, function(d)
       device:configure()
     end)]]
+    
+    -- Setup decoupling for lumi.switch.acn040 - moved from do_configure to ensure it always runs
+    if device:get_model() == "lumi.switch.acn040" then
+      print("DEBUG: MATCHED lumi.switch.acn040 - Running decoupling configuration in device_init!")
+      device.thread:call_with_delay(5, function(d)
+        print("<< Send preferences for Aqara 3-Switch Decouple (from device_init) >>")
+        
+        -- Set decoupling preferences if they exist (endpoints 1,2,3)
+        if device.preferences.decoupleSwitch1 ~= nil then
+          local value_send = tonumber(device.preferences.decoupleSwitch1)  -- 0=decoupled, 1=coupled (control_relay)
+          local data_type = data_types.Uint8
+          local cluster_id = 0xFCC0
+          local attr_id = 0x0200  -- Operation mode attribute (exactly as zigbee-herdsman-converters)
+          local mfg_code = 0x115F
+          device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (1))
+        end
+        
+        if device.preferences.decoupleSwitch2 ~= nil then
+          local value_send = tonumber(device.preferences.decoupleSwitch2)  -- 0=decoupled, 1=coupled (control_relay)
+          local data_type = data_types.Uint8
+          local cluster_id = 0xFCC0
+          local attr_id = 0x0200  -- Operation mode attribute (exactly as zigbee-herdsman-converters)
+          local mfg_code = 0x115F
+          device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (2))
+        end
+        
+        if device.preferences.decoupleSwitch3 ~= nil then
+          local value_send = tonumber(device.preferences.decoupleSwitch3)  -- 0=decoupled, 1=coupled (control_relay)
+          local data_type = data_types.Uint8
+          local cluster_id = 0xFCC0
+          local attr_id = 0x0200  -- Operation mode attribute (exactly as zigbee-herdsman-converters)
+          local mfg_code = 0x115F
+          device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (3))
+        end
+
+        -- Read current decoupling states after configuration
+        device.thread:call_with_delay(3, function(d)
+          print("<<< Read Aqara 3-Switch decoupling attributes (from device_init) >>>")
+          -- Read decoupling attribute (0x0200) exactly as zigbee-herdsman-converters
+          local attr_ids = {0x0200} 
+          device:send(read_attribute_function (device, data_types.ClusterId(0xFCC0), attr_ids))
+        end)
+      end)
+    end
   end
 end
 
