@@ -1,0 +1,139 @@
+name: lumi-three-switch-button-combined
+components:
+- id: main
+  capabilities:
+  - id: switch
+    version: 1
+  - id: legendabsolute60149.switchAllOnOff1
+    version: 1
+  - id: legendabsolute60149.signalMetrics
+    version: 1
+  - id: refresh
+    version: 1
+  - id: firmwareUpdate
+    version: 1
+  categories:
+  - name: Switch
+- id: button1
+  capabilities:
+  - id: button
+    version: 1
+  categories:
+  - name: RemoteController  
+- id: switch2
+  capabilities:
+  - id: switch
+    version: 1
+  - id: refresh
+    version: 1
+  categories:
+  - name: Switch
+- id: button2
+  capabilities:
+  - id: button
+    version: 1
+  categories:
+  - name: RemoteController  
+- id: switch3
+  capabilities:
+  - id: switch
+    version: 1
+  - id: refresh
+    version: 1
+  categories:
+  - name: Switch
+- id: button3
+  capabilities:
+  - id: button
+    version: 1
+  categories:
+  - name: RemoteController
+preferences:
+  - name: "version"
+    title: "Version 4.8 (Combined Mode)"
+    description: "Dynamic switching between switch and button based on coupling state" 
+    required: false
+    preferenceType: string
+    definition:
+      stringType: text
+      minLength: 0
+      maxLength: 0
+      default: ""
+  - name: "decoupleSwitch1"
+    title: "Switch 1 Mode"
+    description: "Coupled = Normal Switch, Decoupled = Button Mode"
+    required: false
+    preferenceType: enumeration
+    definition:
+      options:
+        "1": "Coupled (Switch Mode)"
+        "0": "Decoupled (Button Mode)"
+      default: "1"
+  - name: "decoupleSwitch2"
+    title: "Switch 2 Mode"
+    description: "Coupled = Normal Switch, Decoupled = Button Mode"
+    required: false
+    preferenceType: enumeration
+    definition:
+      options:
+        "1": "Coupled (Switch Mode)"
+        "0": "Decoupled (Button Mode)"
+      default: "1"
+  - name: "decoupleSwitch3"
+    title: "Switch 3 Mode"
+    description: "Coupled = Normal Switch, Decoupled = Button Mode"
+    required: false
+    preferenceType: enumeration
+    definition:
+      options:
+        "1": "Coupled (Switch Mode)"
+        "0": "Decoupled (Button Mode)"
+      default: "1"
+  - name: "onOffReports"
+    title: "Device On-Off Interval Report"
+    description: "Set Device Interval Report (300 to 1200 sec). Smartthings Default = 300."
+    required: true
+    preferenceType: integer
+    definition:
+      minimum: 300
+      maximum: 1200
+      default: 300
+  - name: "restoreState"
+    title: "Restore State After Power Lost"
+    description: "After the power supply is back on, the State can be restored to previous state or remain switched off"
+    required: false
+    preferenceType: enumeration
+    definition:
+      options:
+        "0": "device remains switched Off"
+        "1": "device remains switched On"
+        "255": "device restores previous state"
+      default: "255"
+  - name: "signalMetricsVisibles"
+    title: "Signal Metrics in History"
+    description: "Signal Metrics Visible in App History:"
+    required: false
+    preferenceType: enumeration
+    definition:
+      options:
+        "Yes" : "Signal Metrics Visible"
+        "No": "Signal Metrics No Visible"
+      default: "No"
+  - name: "logDebugPrint"
+    title: "Show Logs Debug Prints in CLI"
+    required: false
+    preferenceType: boolean
+    definition:
+      default: false
+  - name: "profile"
+    title: "Device Profile Name"
+    description: "Internal profile identifier for driver logic"
+    required: false
+    preferenceType: enumeration
+    definition:
+      options:
+        "lumi_three_switch_button_combined": "Lumi Combined Profile"
+      default: "lumi_three_switch_button_combined"
+metadata:
+  mnmn: "SmartThingsCommunity"
+  vid: "ba887109-bef3-3d81-bb2b-db77b6b18d74"

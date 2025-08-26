@@ -1,0 +1,114 @@
+{
+    "mnmn": "SmartThingsCommunity",
+    "vid": "ba39e9fd-6d5d-355a-85e5-fdfea93a16e3",
+    "version": "0.0.1",
+    "type": "profile",
+    "dpInfo": [
+        {
+            "os": "ios",
+            "dpUri": "plugin://com.samsung.ios.plugin.stplugin/assets/files/index.html",
+            "arguments": []
+        },
+        {
+            "os": "android",
+            "dpUri": "plugin://com.samsung.android.plugin.stplugin",
+            "arguments": []
+        },
+        {
+            "os": "web",
+            "dpUri": "wwst://com.samsung.one.plugin.stplugin",
+            "arguments": []
+        }
+    ],
+    "dashboard": {
+        "states": [
+            {
+                "component": "battery",
+                "capability": "battery",
+                "version": 1,
+                "idx": 0,
+                "group": "main",
+                "values": [],
+                "composite": false
+            }
+        ],
+        "actions": [],
+        "basicPlus": []
+    },
+    "detailView": [
+        {
+            "component": "battery",
+            "capability": "battery",
+            "version": 1,
+            "values": [],
+            "patch": []
+        },
+        {
+            "component": "main",
+            "capability": "button",
+            "version": 1,
+            "values": [],
+            "patch": []
+        },
+        {
+            "component": "button2",
+            "capability": "button",
+            "version": 1,
+            "values": [],
+            "patch": []
+        },
+        {
+            "component": "button3",
+            "capability": "button",
+            "version": 1,
+            "values": [],
+            "patch": []
+        },
+        {
+            "component": "button4",
+            "capability": "button",
+            "version": 1,
+            "values": [],
+            "patch": []
+        }
+    ],
+    "automation": {
+        "conditions": [
+            {
+                "component": "main",
+                "capability": "button",
+                "version": 1,
+                "values": [],
+                "patch": [],
+                "exclusion": []
+            },
+            {
+                "component": "button2",
+                "capability": "button",
+                "version": 1,
+                "values": [],
+                "patch": [],
+                "exclusion": []
+            },
+            {
+                "component": "button3",
+                "capability": "button",
+                "version": 1,
+                "values": [],
+                "patch": [],
+                "exclusion": []
+            },
+            {
+                "component": "button4",
+                "capability": "button",
+                "version": 1,
+                "values": [],
+                "patch": [],
+                "exclusion": []
+            }
+        ],
+        "actions": []
+    },
+    "presentationId": "ba39e9fd-6d5d-355a-85e5-fdfea93a16e3",
+    "manufacturerName": "SmartThingsCommunity"
+}

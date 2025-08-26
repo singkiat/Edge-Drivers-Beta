@@ -13,6 +13,7 @@
 -- limitations under the License.
 
 local capabilities = require "st.capabilities"
+local button = require "st.capabilities".button
 local ZigbeeDriver = require "st.zigbee"
 local defaults = require "st.zigbee.defaults"
 --local device_management = require "st.zigbee.device_management"
@@ -71,6 +72,60 @@ local signal_Metrics = capabilities["legendabsolute60149.signalMetrics"]
     --}))
   })
   end
+
+---- Check if device is using lumi combined profile ----
+local function is_lumi_combined_profile(device)
+  if device.preferences.logDebugPrint == true then
+    print("DEBUG: Profile check - device.preferences.profile:", device.preferences.profile or "nil")
+    print("DEBUG: Profile check - device.profile:", device.profile and device.profile.name or "nil")
+    print("DEBUG: Looking for profile: lumi_three_switch_button_combined")
+  end
+  
+  return device.preferences.profile == "lumi_three_switch_button_combined"
+end
+
+---- Update component capabilities based on individual switch coupling state ----
+local function update_component_capabilities(device)
+  if not is_lumi_combined_profile(device) then
+    return
+  end
+  
+  if device.preferences.logDebugPrint == true then
+    print("Updating component capabilities based on decoupling state")
+  end
+  
+  -- Use the clean pattern from web search - check capability support first
+  if device:supports_capability_by_id(button.ID) then
+    if device.preferences.logDebugPrint == true then
+      print("DEBUG: Device supports button capability, setting up button attributes")
+    end
+    
+    -- Set numberOfButtons (total buttons on device)
+    local button_count = 3
+    device:emit_event(button.numberOfButtons({ value = button_count }))
+    if device.preferences.logDebugPrint == true then
+      print("DEBUG: Set numberOfButtons:", button_count)
+    end
+    
+    -- Set supportedButtonValues (what actions each button supports)
+    local supported_values = {"pushed", "double"}  -- Only single and double press (event codes 1, 2)
+    device:emit_event(button.supportedButtonValues({ value = supported_values }))
+    if device.preferences.logDebugPrint == true then
+      print("DEBUG: Set supportedButtonValues:", table.concat(supported_values, ", "))
+    end
+  else
+    if device.preferences.logDebugPrint == true then
+      print("WARNING: Device does not support button capability")
+    end
+  end
+  
+  -- Log current coupling states for debugging
+  if device.preferences.logDebugPrint == true then
+    print("Switch 1 coupling state:", device.preferences.decoupleSwitch1)
+    print("Switch 2 coupling state:", device.preferences.decoupleSwitch2) 
+    print("Switch 3 coupling state:", device.preferences.decoupleSwitch3)
+  end
+end
 
 --- Update preferences after infoChanged recived ---
 local function do_preferences (driver, device)
@@ -252,6 +307,9 @@ local function do_preferences (driver, device)
         local attr_id = 0x0200  -- Operation mode attribute (exactly as zigbee-herdsman-converters)
         local mfg_code = 0x115F
         device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (1))
+        
+        -- Update component capabilities after decoupling change
+        update_component_capabilities(device)
       elseif id == "decoupleSwitch2" then
         local value_send = tonumber(newParameterValue)  -- 0=decoupled, 1=coupled (control_relay)
         local data_type = data_types.Uint8
@@ -259,6 +317,9 @@ local function do_preferences (driver, device)
         local attr_id = 0x0200  -- Operation mode attribute (exactly as zigbee-herdsman-converters)
         local mfg_code = 0x115F
         device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (2))
+        
+        -- Update component capabilities after decoupling change
+        update_component_capabilities(device)
       elseif id == "decoupleSwitch3" then
         local value_send = tonumber(newParameterValue)  -- 0=decoupled, 1=coupled (control_relay)
         local data_type = data_types.Uint8
@@ -266,6 +327,9 @@ local function do_preferences (driver, device)
         local attr_id = 0x0200  -- Operation mode attribute (exactly as zigbee-herdsman-converters)
         local mfg_code = 0x115F
         device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (3))
+        
+        -- Update component capabilities after decoupling change
+        update_component_capabilities(device)
       end
       -- Call to Create child device
       local profile_type = "child-switch"
@@ -690,62 +754,82 @@ local function do_configure(driver, device)
       end)
     end
 
-    -- Configuration for lumi.switch.acn040 (3-switch with decoupling) - Verified IDs
+    -- Configuration for lumi.switch.acn040 (3-switch with decoupling) - DISABLED
+    -- This has been moved to the profile-based initialization in device_init to avoid conflicts
     print("DEBUG: Device model is:", device:get_model())
-    if device:get_model() == "lumi.switch.acn040" then
-      print("DEBUG: MATCHED lumi.switch.acn040 - Running decoupling configuration!")
-      print("<< Send preferences for Aqara 3-Switch Decouple >>")
-      
-      -- Set decoupling preferences if they exist (endpoints 1,2,3 corrected for lumi.acn040)
-      if device.preferences.decoupleSwitch1 ~= nil then
-        local value_send = tonumber(device.preferences.decoupleSwitch1)  -- 0=decoupled, 1=coupled (control_relay)
-        local data_type = data_types.Uint8
-        local cluster_id = 0xFCC0
-        local attr_id = 0x0200  -- Operation mode attribute (exactly as zigbee-herdsman-converters)
-        local mfg_code = 0x115F
-        device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (1))
-      end
-      
-      if device.preferences.decoupleSwitch2 ~= nil then
-        local value_send = tonumber(device.preferences.decoupleSwitch2)  -- 0=decoupled, 1=coupled (control_relay)
-        local data_type = data_types.Uint8
-        local cluster_id = 0xFCC0
-        local attr_id = 0x0200  -- Operation mode attribute (exactly as zigbee-herdsman-converters)
-        local mfg_code = 0x115F
-        device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (2))
-      end
-      
-      if device.preferences.decoupleSwitch3 ~= nil then
-        local value_send = tonumber(device.preferences.decoupleSwitch3)  -- 0=decoupled, 1=coupled (control_relay)
-        local data_type = data_types.Uint8
-        local cluster_id = 0xFCC0
-        local attr_id = 0x0200  -- Operation mode attribute (exactly as zigbee-herdsman-converters)
-        local mfg_code = 0x115F
-        device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (3))
-      end
-
-      -- Read current decoupling states after configuration
-      device.thread:call_with_delay(3, function(d)
-        print("<<< Read Aqara 3-Switch decoupling attributes >>>")
-        -- Read decoupling attribute (0x0200) exactly as zigbee-herdsman-converters
-        local attr_ids = {0x0200} 
-        device:send(read_attribute_function (device, data_types.ClusterId(0xFCC0), attr_ids))
-      end)
-    end
+    -- if device:get_model() == "lumi.switch.acn040" then ... end -- REMOVED: Using profile-based init instead
   end
+end
+
+---- Component to endpoint mapping (similar to 4-button driver) ----
+local function lumi_component_to_endpoint(device, component_id)
+  -- Handle button components
+  if component_id == "button1" then return 1 end
+  if component_id == "button2" then return 2 end  
+  if component_id == "button3" then return 3 end
+  
+  -- Handle switch components (existing mapping)
+  if component_id == "main" then return 1 end
+  if component_id == "switch2" then return 2 end
+  if component_id == "switch3" then return 3 end
+  
+  return 1  -- default
+end
+
+---- Endpoint to component mapping (similar to 4-button driver) ----
+local function lumi_endpoint_to_component(device, endpoint)
+  if device.preferences.logDebugPrint == true then
+    print("lumi_endpoint_to_component called - endpoint:", endpoint, "profile:", device.profile.name)
+  end
+  
+  -- For button events in decoupled mode, we want to route to button components
+  if is_lumi_combined_profile(device) then
+    -- Check if the corresponding switch is decoupled
+    local is_decoupled = false
+    local component_id = nil
+    
+    if endpoint == 1 then
+      is_decoupled = device.preferences.decoupleSwitch1 == "0"
+      component_id = is_decoupled and "button1" or "main"
+    elseif endpoint == 2 then
+      is_decoupled = device.preferences.decoupleSwitch2 == "0"
+      component_id = is_decoupled and "button2" or "switch2"
+    elseif endpoint == 3 then
+      is_decoupled = device.preferences.decoupleSwitch3 == "0"
+      component_id = is_decoupled and "button3" or "switch3"
+    else
+      component_id = "main"
+    end
+    
+    if device.preferences.logDebugPrint == true then
+      print("Endpoint", endpoint, "-> component:", component_id, "decoupled:", is_decoupled)
+    end
+    return component_id
+  end
+  
+  -- Default switch component mapping
+  if endpoint == 1 then return "main" end
+  if endpoint == 2 then return "switch2" end
+  if endpoint == 3 then return "switch3" end
+  
+  return "main"
 end
 
 ---device init ----
 local function device_init (driver, device)
-  print("device_network_id >>>",device.device_network_id)
-  print("label >>>",device.label)
+  print("🚀 DEVICE_INIT START - device_network_id >>>",device.device_network_id)
+  print("🚀 DEVICE_INIT START - label >>>",device.label)
+  print("🚀 DEVICE_INIT START - model >>>", device:get_model())
+  print("🚀 DEVICE_INIT START - manufacturer >>>", device:get_manufacturer())
+  print("🚀 DEVICE_INIT START - profile >>>", device.preferences.profile or "nil")
+  print("🚀 DEVICE_INIT START - device.profile >>>", device.profile and device.profile.name or "nil")
+  print("🚀 FINGERPRINT CHECK - Expected: manufacturer=LUMI, model=lumi.switch.acn040")
   print("parent_device_id >>>",device.parent_device_id)
   print("device.preferences.profileType >>>",device.preferences.profileType)
-
+  
   if device.network_type ~= "DEVICE_EDGE_CHILD" then  ---- device (is NO Child device)
-
-    device:set_component_to_endpoint_fn(component_to_endpoint)
-    device:set_endpoint_to_component_fn(endpoint_to_component)
+    -- Profile-dependent initialization moved to device_added where profile is available
+    print("🚀 DEVICE_INIT: Profile-dependent code moved to device_added - profile is nil here")
 
       ------ Selected profile & Icon
       for id, value in pairs(device.preferences) do
@@ -944,9 +1028,14 @@ local function device_init (driver, device)
       device:configure()
     end)]]
     
-    -- Setup decoupling for lumi.switch.acn040 - moved from do_configure to ensure it always runs
-    if device:get_model() == "lumi.switch.acn040" then
-      print("DEBUG: MATCHED lumi.switch.acn040 - Running decoupling configuration in device_init!")
+    -- Debug: Show actual profile being used (UNCONDITIONAL)
+    print("DEBUG: Device model:", device:get_model())
+    print("DEBUG: Device profile name:", device.profile and device.profile.name or "nil")
+    print("DEBUG: Expected profile: lumi_three_switch_button_combined")
+    
+    -- Setup decoupling for lumi combined profile - moved from do_configure to ensure it always runs
+    if is_lumi_combined_profile(device) then
+      print("DEBUG: MATCHED lumi combined profile - Running decoupling configuration in device_init!")
       device.thread:call_with_delay(5, function(d)
         print("<< Send preferences for Aqara 3-Switch Decouple (from device_init) >>")
         
@@ -978,8 +1067,28 @@ local function device_init (driver, device)
           device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (3))
         end
 
+        -- Configure device for button events (based on zigbee-herdsman-converters)
+        device.thread:call_with_delay(2, function(d)
+          print("<<< Configuring Aqara 3-Switch for button events >>>")
+          -- Set "event" mode to enable button events
+          local data_type = data_types.Uint8
+          local cluster_id = 0xFCC0
+          local attr_id = 0x0009  -- mode attribute
+          local mfg_code = 0x115F
+          local mode_value = 1  -- event mode
+          device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, mode_value, mfg_code):to_endpoint(1))
+          
+          -- Enable "multiple clicks" mode (based on herdsman converters)
+          device.thread:call_with_delay(1, function(d)
+            print("<<< Enabling multiple clicks mode >>>")
+            local multi_click_attr = 0x0125  -- 293 decimal = 0x0125 hex
+            local multi_click_value = 2  -- enable multiple clicks
+            device:send(write.custom_write_attribute(device, cluster_id, multi_click_attr, data_type, multi_click_value, mfg_code):to_endpoint(1))
+          end)
+        end)
+
         -- Read current decoupling states after configuration
-        device.thread:call_with_delay(3, function(d)
+        device.thread:call_with_delay(5, function(d)
           print("<<< Read Aqara 3-Switch decoupling attributes (from device_init) >>>")
           -- Read decoupling attribute (0x0200) exactly as zigbee-herdsman-converters
           local attr_ids = {0x0200} 
@@ -987,6 +1096,8 @@ local function device_init (driver, device)
         end)
       end)
     end
+    
+    -- Component capabilities initialization moved to device_added where profile is available
   end
 end
 
@@ -1235,6 +1346,33 @@ end
 
 --- read zigbee attribute OnOff messages ----
 local function on_off_attr_handler(driver, device, value, zb_rx)
+  -- 🚀 PROFILE DEBUG - This handler IS being called!
+  print("🚀 ON_OFF_HANDLER - model:", device:get_model())
+  print("🚀 ON_OFF_HANDLER - profile:", device.preferences.profile or "nil")
+  print("🚀 ON_OFF_HANDLER - device.profile:", device.profile and device.profile.name or "nil") 
+  print("🚀 ON_OFF_HANDLER - is_lumi_combined:", is_lumi_combined_profile(device))
+  
+  -- 🔧 MANUAL INITIALIZATION - Since device_added didn't run but profile detection works
+  if is_lumi_combined_profile(device) and device.network_type ~= "DEVICE_EDGE_CHILD" then
+    -- Check if initialization already happened by testing a device field
+    local needs_init = not device:get_field("lumi_button_init")
+    
+    if needs_init then
+      print("🚀 MANUAL INITIALIZATION: Setting up Lumi button capabilities...")
+      -- Set component mapping 
+      device:set_component_to_endpoint_fn(lumi_component_to_endpoint)
+      device:set_endpoint_to_component_fn(lumi_endpoint_to_component)
+      
+      -- Initialize button capabilities (now with proper endpoint approach)
+      update_component_capabilities(device)
+      
+      -- Mark as initialized to prevent future runs
+      device:set_field("lumi_button_init", true, {persist = true})
+      
+      print("🚀 MANUAL INITIALIZATION: Complete!")
+    end
+  end
+  
   if device.preferences.logDebugPrint == true then
     print ("function: on_off_attr_handler")
   end
@@ -1294,8 +1432,211 @@ local function on_off_attr_handler(driver, device, value, zb_rx)
   end
 end
 
+
+---- Get button component ID for endpoint ----
+local function endpoint_to_button_component(device, endpoint)
+  if not is_lumi_combined_profile(device) then
+    return nil
+  end
+  
+  if endpoint == 1 then
+    return "button1"
+  elseif endpoint == 2 then
+    return "button2" 
+  elseif endpoint == 3 then
+    return "button3"
+  end
+  return nil
+end
+
+---- Map button event code to action based on device profile (like herdsman converters) ----
+local function map_button_event(code, device)
+  -- Button mappings for different profiles
+  -- Event codes: 1=single press, 2=double press, 3=triple press
+  local button_mappings = {
+    ["lumi-three-switch-button-combined"] = {
+      [1] = "pushed",    -- Single press
+      [2] = "double",    -- Double press  
+      [3] = "triple"       -- Triple press (not supported in our profile)
+    }
+    -- Add more profiles as needed:
+    -- ["4-button-battery"] = {
+    --   [1] = "pushed",
+    --   [2] = "double", 
+    --   [3] = "held"
+    -- }
+  }
+  
+  local profile_name = device.profile and device.profile.name or "unknown"
+  
+  if button_mappings[profile_name] and button_mappings[profile_name][code] then
+    return button_mappings[profile_name][code]
+  end
+  
+  if device.preferences.logDebugPrint == true then
+    print("Unknown button event code:", code, "for profile:", profile_name)
+  end
+  
+  return nil -- Unknown event
+end
+
+---- Handle button events from manufacturer cluster (adapted from 4-button driver approach) ----
+-- Note: Button identifiers 41,42,43 (Herdsman style) vs Event codes 1,2,3 (press types)
+-- - Endpoint identifies which button (1, 2, 3)
+-- - Event codes in ZCL body identify press type: 1=single, 2=double, 3=triple
+local function handle_lumi_button_event_from_cluster(driver, device, zb_rx)
+  if not is_lumi_combined_profile(device) then
+    return
+  end
+  
+  local src_endpoint = zb_rx.address_header.src_endpoint.value
+  local button_component_id = endpoint_to_button_component(device, src_endpoint)
+  
+  if device.preferences.logDebugPrint == true then
+    print("Button event from cluster - endpoint:", src_endpoint, "component:", button_component_id)
+    print("Raw ZCL body:", zb_rx.body.zcl_body and tostring(zb_rx.body.zcl_body) or "nil")
+  end
+  
+  -- Check if this switch is in decoupled mode
+  local is_decoupled = false
+  if src_endpoint == 1 then
+    is_decoupled = device.preferences.decoupleSwitch1 == "0"
+  elseif src_endpoint == 2 then
+    is_decoupled = device.preferences.decoupleSwitch2 == "0"
+  elseif src_endpoint == 3 then
+    is_decoupled = device.preferences.decoupleSwitch3 == "0"
+  end
+  
+  if not is_decoupled then
+    if device.preferences.logDebugPrint == true then
+      print("Switch not in decoupled mode, ignoring button event")
+    end
+    return  -- Only handle button events for decoupled switches
+  end
+  
+  -- Extract button event code from ZCL body (like 4-button driver approach)
+  -- Event codes: 1=single press, 2=double press, 3=triple press
+  local event_code = nil
+  if zb_rx.body and zb_rx.body.zcl_body then
+    local zcl_body_str = tostring(zb_rx.body.zcl_body)
+    if zcl_body_str then
+      -- Look for event code in ZCL body (pattern may vary from 4-button driver)
+      -- Try pattern like "GenericBody: 0X" first (4-button style)
+      event_code = zcl_body_str:match("GenericBody:%s*0(%d)")
+      if event_code then
+        event_code = tonumber(event_code)
+      else
+        -- Try direct digit pattern for Lumi devices
+        event_code = zcl_body_str:match("GenericBody:%s*(%d)")
+        if event_code then
+          event_code = tonumber(event_code)
+        end
+      end
+    end
+  end
+  
+  if device.preferences.logDebugPrint == true then
+    print("Extracted event code:", event_code)
+  end
+  
+  -- Decode button action using profile-based mapping (codes: 41, 42, 43)
+  local button_action = nil
+  if event_code then
+    button_action = map_button_event(event_code, device)
+  end
+  
+  if device.preferences.logDebugPrint == true and button_action then
+    print("Mapped button code", event_code, "to action:", button_action)
+  end
+  
+  -- Send button event using emit_component_event with correct button component
+  if button_component_id and button_action then
+    -- Use emit_component_event instead of emit_event_for_endpoint since device.profile is nil
+    device:emit_component_event(button_component_id, button.button(button_action))
+    if device.preferences.logDebugPrint == true then
+      print("Button event '" .. button_action .. "' sent to component:", button_component_id)
+    end
+  end
+end
+
+---- Handle button events from manufacturer-specific cluster (fallback) ----
+local function handle_lumi_button_event(driver, device, zb_rx)
+  if not is_lumi_combined_profile(device) then
+    return
+  end
+  
+  local src_endpoint = zb_rx.address_header.src_endpoint.value
+  local button_component_id = endpoint_to_button_component(device, src_endpoint)
+  
+  if device.preferences.logDebugPrint == true then
+    print("Lumi button event (0xFCC0) - endpoint:", src_endpoint, "button component:", button_component_id)
+    print("Raw message body:", zb_rx.body)
+  end
+  
+  -- Check if this switch is in decoupled mode
+  local is_decoupled = false
+  if src_endpoint == 1 then
+    is_decoupled = device.preferences.decoupleSwitch1 == "0"
+  elseif src_endpoint == 2 then
+    is_decoupled = device.preferences.decoupleSwitch2 == "0"
+  elseif src_endpoint == 3 then
+    is_decoupled = device.preferences.decoupleSwitch3 == "0"
+  end
+  
+  if not is_decoupled then
+    return  -- Only handle button events for decoupled switches
+  end
+  
+  -- For manufacturer cluster, emit generic push (fallback)
+  if button_component_id then
+    local button_component = nil
+    if button_component_id == "button1" then
+      button_component = device.profile.components.button1
+    elseif button_component_id == "button2" then
+      button_component = device.profile.components.button2
+    elseif button_component_id == "button3" then
+      button_component = device.profile.components.button3
+    end
+    
+    if button_component then
+      device:emit_component_event(button_component, button.button("pushed"))
+      if device.preferences.logDebugPrint == true then
+        print("Fallback button event 'pushed' sent to component:", button_component_id)
+      end
+    end
+  end
+end
+
+
 --- do_added
 local function do_added(driver, device)
+  
+  -- 🚀 PROFILE SHOULD BE AVAILABLE NOW! Check after profile assignment
+  print("🚀 DO_ADDED - device_network_id >>>",device.device_network_id)
+  print("🚀 DO_ADDED - model >>>", device:get_model())
+  print("🚀 DO_ADDED - profile >>>", device.preferences.profile or "nil")
+  print("🚀 DO_ADDED - device.profile >>>", device.profile and device.profile.name or "nil")
+  
+  if device.network_type ~= "DEVICE_EDGE_CHILD" then  ---- device (is NOT Child device)
+    -- Handle main device profile-dependent initialization
+    if is_lumi_combined_profile(device) then
+      print("🚀 LUMI COMBINED PROFILE DETECTED! Initializing button capabilities...")
+      
+      -- Set component-to-endpoint mapping functions (like 4-button driver)  
+      device:set_component_to_endpoint_fn(lumi_component_to_endpoint)
+      device:set_endpoint_to_component_fn(lumi_endpoint_to_component)
+      
+      -- Initialize button capabilities now that profile is available
+      update_component_capabilities(device)
+      
+      print("🚀 LUMI initialization complete!")
+    else
+      print("🚀 NOT LUMI COMBINED PROFILE - using default mapping")
+      -- Default mapping for other devices
+      device:set_component_to_endpoint_fn(component_to_endpoint)
+      device:set_endpoint_to_component_fn(endpoint_to_component)
+    end
+  end
 
   if device.network_type == "DEVICE_EDGE_CHILD" then  ---- device (is Child device)
     print("Adding EDGE:CHILD device...")
@@ -1508,7 +1849,8 @@ local zigbee_outlet_driver_template = {
     capabilities.powerMeter,
     capabilities.energyMeter,
     capabilities.refresh,
-    capabilities.battery
+    capabilities.battery,
+    button
   },
   lifecycle_handlers = {
     init = device_init,
@@ -1522,6 +1864,12 @@ local zigbee_outlet_driver_template = {
       [zcl_clusters.Level.ID] = {
         [zcl_clusters.Level.server.commands.Step.ID] = step_command_handler
       },
+      -- Handle manufacturer-specific cluster for button events
+      [0xFCC0] = {
+        [zcl_global_commands.REPORT_ATTRIBUTE_ID] = handle_lumi_button_event,
+        -- Add more command IDs if needed for button events
+        [0xFD] = handle_lumi_button_event_from_cluster,  -- Similar to 4-button driver approach
+      },
     },
     global = {
      [zcl_clusters.OnOff.ID] = {
@@ -1534,7 +1882,8 @@ local zigbee_outlet_driver_template = {
      },
      [zcl_clusters.Level.ID] = {
         [zcl_clusters.Level.attributes.CurrentLevel.ID] = level_attr_handler
-      }
+      },
+
    }
 },
 capability_handlers = {

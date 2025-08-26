@@ -941,10 +941,10 @@ zigbeeManufacturer:
     model: FB56+ZSW1IKJ2.7
     deviceProfileName: three-switch
   - id: "LUMI/switch.acn040"
-    deviceLabel: Aqara ZNQBKG31LM (Decoupling)
+    deviceLabel: Aqara ZNQBKG31LM (Switch+Button)
     manufacturer: LUMI
     model: lumi.switch.acn040
-    deviceProfileName: lumi-three-switch-decouple
+    deviceProfileName: lumi-three-switch-button-combined
   - id: "TS0003/_TZ3000_lubfc1t5v"
     deviceLabel: Two Switch & One Plug 
     manufacturer: _TZ3000_lubfc1t5
