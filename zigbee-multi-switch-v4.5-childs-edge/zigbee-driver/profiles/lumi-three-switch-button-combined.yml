@@ -4,7 +4,7 @@ components:
   capabilities:
   - id: switch
     version: 1
-  - id: legendabsolute60149.switchAllOnOff1
+  - id: button
     version: 1
   - id: legendabsolute60149.signalMetrics
     version: 1
@@ -12,42 +12,29 @@ components:
     version: 1
   - id: firmwareUpdate
     version: 1
+
   categories:
   - name: Switch
-- id: button1
-  capabilities:
-  - id: button
-    version: 1
-  categories:
-  - name: RemoteController  
 - id: switch2
   capabilities:
   - id: switch
     version: 1
+  - id: button
+    version: 1
   - id: refresh
     version: 1
   categories:
   - name: Switch
-- id: button2
-  capabilities:
-  - id: button
-    version: 1
-  categories:
-  - name: RemoteController  
 - id: switch3
   capabilities:
   - id: switch
     version: 1
+  - id: button
+    version: 1
   - id: refresh
     version: 1
   categories:
   - name: Switch
-- id: button3
-  capabilities:
-  - id: button
-    version: 1
-  categories:
-  - name: RemoteController
 preferences:
   - name: "version"
     title: "Version 4.8 (Combined Mode)"
@@ -134,6 +121,18 @@ preferences:
       options:
         "lumi_three_switch_button_combined": "Lumi Combined Profile"
       default: "lumi_three_switch_button_combined"
+  - name: "buttonMethod"
+    title: "Button Detection Method"
+    description: "Choose how button presses are detected when switches are decoupled"
+    required: false
+    preferenceType: enumeration
+    definition:
+      options:
+        "onoff": "OnOff Rapid Transitions (Regular)"
+        "opple": "0xFCC0 Attributes (Opple Style)"
+        "disabled": "Disabled (Switches Only)"
+      default: "onoff"
 metadata:
-  mnmn: "SmartThingsCommunity"
-  vid: "ba887109-bef3-3d81-bb2b-db77b6b18d74"
+  deviceType: Switch
+  ocfDeviceType: oic.d.switch
+  deviceTypeId: Switch

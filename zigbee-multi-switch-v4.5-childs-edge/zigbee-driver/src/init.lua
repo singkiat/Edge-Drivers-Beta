@@ -43,6 +43,198 @@ local write = require "writeAttribute"
 local switch_All_On_Off = capabilities["legendabsolute60149.switchAllOnOff1"]
 local signal_Metrics = capabilities["legendabsolute60149.signalMetrics"]
 
+---- LUMI BUTTON DETECTION (based on SmartThingsEdge-Xiaomi reference) ----
+local PRIVATE_CLUSTER_ID = 0xFCC0
+local PRIVATE_ATTRIBUTE_ID = 0x0009  
+local MFG_CODE = 0x115F
+local OPPLE_CLUSTER = 0xFCC0
+
+local click_types = {
+  [1] = function(args) return capabilities.button.button("pushed", args) end,
+  [2] = function(args) return capabilities.button.button("double", args) end,
+}
+
+-- Xiaomi key mapping for Opple method (from xiaomi_utils.lua)
+local xiaomi_key_map = {
+  [0x6e] = "button1",
+  [0x6f] = "button2",
+}
+
+-- Deserialize Xiaomi data structure (simplified from xiaomi_utils.lua)
+local function deserialize_xiaomi_data(data_buf)
+  local items = {}
+  local data_types = require "st.zigbee.data_types"
+  
+  while data_buf:remain() > 0 do
+    local index = data_types.Uint8.deserialize(data_buf)
+    local data_type = data_types.ZigbeeDataType.deserialize(data_buf)
+    local data = data_types.parse_data_type(data_type.value, data_buf)
+    items[index.value] = data
+  end
+  
+  return items
+end
+
+-- Handle Opple-style button events (Method 1: 0xFCC0 cluster 0x00F7 attribute)
+local function handle_opple_button_events(driver, device, value, zb_rx)
+  if device.preferences.profile ~= "lumi_three_switch_button_combined" then
+    return
+  end
+  
+  local button_method = device.preferences.buttonMethod or "onoff"
+  if button_method ~= "opple" then
+    if device.preferences.logDebugPrint == true then
+      print("⏭️ OPPLE HANDLER: Skipping (method=" .. button_method .. ")")
+    end
+    return  -- Only run if Opple method is selected
+  end
+  
+  if device.preferences.logDebugPrint == true then
+    print("🔍 OPPLE METHOD: Processing 0xFCC0/0x00F7 attribute data")
+  end
+  
+  local data_types = require "st.zigbee.data_types"
+  if value.ID ~= data_types.CharString.ID and value.ID ~= data_types.OctetString.ID then
+    if device.preferences.logDebugPrint == true then
+      print("⚠️ OPPLE: Unknown data type:", tostring(value))
+    end
+    return
+  end
+  
+  local buf = require "st.buf"
+  local bytes = value.value
+  local message_buf = buf.Reader(bytes)
+  
+  local xiaomi_data = deserialize_xiaomi_data(message_buf)
+  
+  -- Check for button events in keys 0x6e and 0x6f
+  for key, data in pairs(xiaomi_data) do
+    if key == 0x6e or key == 0x6f then -- button1 or button2
+      local button_number = key == 0x6e and 1 or 2
+      local press_value = data.value
+      
+      if device.preferences.logDebugPrint == true then
+        print("🎯 OPPLE BUTTON: button" .. button_number .. " value=" .. press_value)
+      end
+      
+      -- Map press value to action
+      local action = click_types[press_value]
+      if action then
+        local component_id = button_number == 1 and "main" or ("switch" .. (button_number + 1))
+        local event = action({ state_change = true })
+        device:emit_component_event(component_id, event)
+        
+        if device.preferences.logDebugPrint == true then
+          print("✅ OPPLE: " .. (press_value == 1 and "single" or "double") .. " → " .. component_id)
+        end
+      end
+    end
+  end
+end
+
+
+---- Component mapping functions (moved up to fix scope error) ----
+local function lumi_component_to_endpoint(device, component_id)
+  if component_id == "main" then return 1 end
+  if component_id == "switch2" then return 2 end
+  if component_id == "switch3" then return 3 end
+  return 1  -- default
+end
+
+local function lumi_endpoint_to_component(device, endpoint)
+  local component_id = "main"
+  if endpoint == 1 then 
+    component_id = "main"
+  elseif endpoint == 2 then
+    component_id = "switch2"
+  elseif endpoint == 3 then
+    component_id = "switch3"
+  end
+  return component_id
+end
+
+-- Handle OnOff rapid transitions for button detection (Xiaomi method)  
+local function lumi_on_off_button_handler(driver, device, value, zb_rx)
+  local endpoint = zb_rx.address_header.src_endpoint.value
+  print("🎯 LUMI_ONOFF_HANDLER: EP" .. endpoint .. " Value=" .. tostring(value.value) .. " Method=" .. tostring(device.preferences.buttonMethod))
+  
+  -- Check if this is the lumi combined profile AND OnOff method is selected
+  if device.preferences.profile ~= "lumi_three_switch_button_combined" then
+    print("🎯 ONOFF HANDLER: Skipping - wrong profile (" .. tostring(device.preferences.profile) .. ")")
+    return
+  end
+  
+  local button_method = device.preferences.buttonMethod or "onoff"
+  if button_method ~= "onoff" then
+    print("⏭️ ONOFF HANDLER: Skipping - method is " .. button_method .. " (need 'onoff')")
+    return  -- Only run if OnOff method is selected
+  end
+  
+  local endpoint = zb_rx.address_header.src_endpoint.value
+  local component_id = lumi_endpoint_to_component(device, endpoint)
+  
+  print("🔘 BUTTON CHECK: EP" .. endpoint .. " → component '" .. component_id .. "'")
+  
+  -- Check if this endpoint should act as a button (decoupled)
+  local decouple_prefs = {
+    [1] = device.preferences.decoupleSwitch1,
+    [2] = device.preferences.decoupleSwitch2,
+    [3] = device.preferences.decoupleSwitch3,
+  }
+  local is_decoupled = decouple_prefs[endpoint] == "0"  -- "0" = decoupled
+  
+  print("🔘 Switch " .. endpoint .. " decoupling pref:", tostring(decouple_prefs[endpoint]), "→ is_decoupled:", is_decoupled)
+  print("🔘 DEBUG: Preference values - SW1:", tostring(device.preferences.decoupleSwitch1), "SW2:", tostring(device.preferences.decoupleSwitch2), "SW3:", tostring(device.preferences.decoupleSwitch3))
+  
+  if not is_decoupled then
+    print("🔘 Switch " .. endpoint .. " NOT decoupled - skipping button detection")
+    return  -- Let normal switch logic handle it
+  end
+  
+  print("🔘 Switch " .. endpoint .. " IS DECOUPLED - starting button detection...")
+  
+  -- Use Xiaomi button detection approach
+  local CLICK_TIMER = string.format("button_timer%d", endpoint)
+  local DOWN_COUNTER = string.format("down_counter%d", endpoint)
+  
+  local down_counter = device:get_field(DOWN_COUNTER) or 0
+  local click_timer = device:get_field(CLICK_TIMER)
+  
+  local timer_func = function()
+    local f_down_counter = device:get_field(DOWN_COUNTER) or 0
+    
+    if device.preferences.logDebugPrint == true then
+      print("🎯 LUMI BUTTON: EP" .. endpoint .. " counter=" .. f_down_counter)
+    end
+    
+    local click_type = click_types[f_down_counter]
+    if click_type then
+      local event = click_type({ state_change = true })
+      device:emit_component_event(component_id, event)
+      
+      if device.preferences.logDebugPrint == true then
+        print("✅ LUMI BUTTON: " .. (f_down_counter == 1 and "single" or "double") .. " -> " .. component_id)
+      end
+    end
+    
+    device:set_field(CLICK_TIMER, nil)
+    device:set_field(DOWN_COUNTER, 0)
+  end
+  
+  if click_timer then
+    -- Timer already running, increment counter
+    down_counter = down_counter + 1
+    device:set_field(DOWN_COUNTER, down_counter)
+    print("🔄 BUTTON TIMER: EP" .. endpoint .. " incremented counter to " .. down_counter)
+  else
+    -- Start new timer
+    local timer = device.thread:call_with_delay(0.4, timer_func)
+    device:set_field(CLICK_TIMER, timer)  
+    device:set_field(DOWN_COUNTER, 1)
+    print("🔄 BUTTON TIMER: EP" .. endpoint .. " started - first transition")
+  end
+end
+
   --tuyaBlackMagic() {return zigbee.readAttribute(0x0000, [0x0004, 0x000, 0x0001, 0x0005, 0x0007, 0xfffe], [:], delay=200)}
   local function read_attribute_function(device, cluster_id, attr_id)
     if device.preferences.logDebugPrint == true then
@@ -84,46 +276,86 @@ local function is_lumi_combined_profile(device)
   return device.preferences.profile == "lumi_three_switch_button_combined"
 end
 
----- Update component capabilities based on individual switch coupling state ----
+-- Button Configuration Pattern (based on GE Z-Wave implementation)
+local LUMI_BUTTONS = {
+  count = 3,  -- 3 buttons for the 3 switches
+  values = {"pushed", "double"}  -- Single and double tap (matching SmartThings standards)
+}
+
+---- Update component capabilities (based on GE Z-Wave pattern + Xiaomi approach) ----
 local function update_component_capabilities(device)
-  if not is_lumi_combined_profile(device) then
+  print("🔧 UPDATE_COMPONENT_CAPABILITIES: Called")
+  print("🔧 Device profile check: " .. tostring(device.preferences.profile))
+  
+  if device.preferences.profile ~= "lumi_three_switch_button_combined" then
+    print("🔧 SKIPPING: Wrong profile")
     return
   end
   
-  if device.preferences.logDebugPrint == true then
-    print("Updating component capabilities based on decoupling state")
+  local button_method = device.preferences.buttonMethod or "onoff"
+  print("🔧 LUMI BUTTON SETUP: Starting (method=" .. button_method .. ")...")
+  
+  -- Skip button setup if disabled
+  if button_method == "disabled" then
+    print("🔧 BUTTON SETUP: DISABLED - Switches only mode")
+    return
   end
   
-  -- Use the clean pattern from web search - check capability support first
-  if device:supports_capability_by_id(button.ID) then
-    if device.preferences.logDebugPrint == true then
-      print("DEBUG: Device supports button capability, setting up button attributes")
+  -- Check button capability support
+  local supports_button = device:supports_capability_by_id(button.ID)
+  print("🔧 Device supports button capability: " .. tostring(supports_button))
+  
+  if supports_button then
+    print("🔧 FORCING button capability initialization...")
+    
+    -- Force emit numberOfButtons and supportedButtonValues (always)
+    print("🔧 FORCING numberOfButtons = 3")
+    device:emit_event(button.numberOfButtons({ value = 3 }))
+    
+    print("🔧 FORCING supportedButtonValues = [pushed, double]")
+    device:emit_event(button.supportedButtonValues({ value = {"pushed", "double"} }))
+    
+    -- Verify the LUMI_BUTTONS table
+    if LUMI_BUTTONS then
+      print("🔧 LUMI_BUTTONS table exists - count:", LUMI_BUTTONS.count, "values:", table.concat(LUMI_BUTTONS.values or {}, ", "))
+    else
+      print("🔧 WARNING: LUMI_BUTTONS table is nil!")
     end
     
-    -- Set numberOfButtons (total buttons on device)
-    local button_count = 3
-    device:emit_event(button.numberOfButtons({ value = button_count }))
-    if device.preferences.logDebugPrint == true then
-      print("DEBUG: Set numberOfButtons:", button_count)
-    end
+    -- Send configuration based on selected button method
+    local cluster_base = require "st.zigbee.cluster_base"
+    local data_types = require "st.zigbee.data_types"
+    local button_method = device.preferences.buttonMethod or "onoff"
     
-    -- Set supportedButtonValues (what actions each button supports)
-    local supported_values = {"pushed", "double"}  -- Only single and double press (event codes 1, 2)
-    device:emit_event(button.supportedButtonValues({ value = supported_values }))
-    if device.preferences.logDebugPrint == true then
-      print("DEBUG: Set supportedButtonValues:", table.concat(supported_values, ", "))
+    if button_method == "opple" then
+      -- Opple method: Send operation mode + multi-click config
+      device:send(cluster_base.write_manufacturer_specific_attribute(device,
+        PRIVATE_CLUSTER_ID, 0x0009, MFG_CODE, data_types.Uint8, 0x01)) -- operation mode = button events
+      
+      device:send(cluster_base.write_manufacturer_specific_attribute(device,
+        PRIVATE_CLUSTER_ID, 0x0125, MFG_CODE, data_types.Uint8, 0x02)) -- enable multi-click
+      
+      if device.preferences.logDebugPrint == true then
+        print("🔧 OPPLE METHOD: Sent 0xFCC0/0x0009=1, 0x0125=2")
+      end
+    elseif button_method == "onoff" then
+      -- OnOff method: Rely on decoupling only (0x0009 unsupported by this firmware)
+      if device.preferences.logDebugPrint == true then
+        print("🔧 ONOFF METHOD: Using decoupling only (0x0009 unsupported)")
+      end
+    else -- disabled
+      if device.preferences.logDebugPrint == true then
+        print("🔧 BUTTON DETECTION DISABLED: No button configuration sent")
+      end
     end
   else
     if device.preferences.logDebugPrint == true then
-      print("WARNING: Device does not support button capability")
+      print("🔧 WARNING: Device does NOT support button capability")
     end
   end
   
-  -- Log current coupling states for debugging
   if device.preferences.logDebugPrint == true then
-    print("Switch 1 coupling state:", device.preferences.decoupleSwitch1)
-    print("Switch 2 coupling state:", device.preferences.decoupleSwitch2) 
-    print("Switch 3 coupling state:", device.preferences.decoupleSwitch3)
+    print("🔧 LUMI BUTTON SETUP: Complete!")
   end
 end
 
@@ -301,6 +533,7 @@ local function do_preferences (driver, device)
         device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (2))
       -- Decoupling preferences for lumi.switch.acn040 (verified IDs)
       elseif id == "decoupleSwitch1" then
+        print("🔄 DECOUPLING CHANGED: Switch 1: " .. tostring(oldPreferenceValue) .. " → " .. tostring(newParameterValue))
         local value_send = tonumber(newParameterValue)  -- 0=decoupled, 1=coupled (control_relay)
         local data_type = data_types.Uint8
         local cluster_id = 0xFCC0
@@ -308,9 +541,13 @@ local function do_preferences (driver, device)
         local mfg_code = 0x115F
         device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (1))
         
-        -- Update component capabilities after decoupling change
-        update_component_capabilities(device)
+        -- Force preference cache refresh with delay
+        device.thread:call_with_delay(2, function()
+          print("🔄 FORCING preference cache refresh for Switch 1")
+          print("🔘 NEW SW1 value:", tostring(device.preferences.decoupleSwitch1))
+        end)
       elseif id == "decoupleSwitch2" then
+        print("🔄 DECOUPLING CHANGED: Switch 2: " .. tostring(oldPreferenceValue) .. " → " .. tostring(newParameterValue))
         local value_send = tonumber(newParameterValue)  -- 0=decoupled, 1=coupled (control_relay)
         local data_type = data_types.Uint8
         local cluster_id = 0xFCC0
@@ -318,18 +555,83 @@ local function do_preferences (driver, device)
         local mfg_code = 0x115F
         device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (2))
         
-        -- Update component capabilities after decoupling change
-        update_component_capabilities(device)
+        -- Force preference cache refresh with delay
+        device.thread:call_with_delay(2, function()
+          print("🔄 FORCING preference cache refresh for Switch 2")
+          print("🔘 NEW SW2 value:", tostring(device.preferences.decoupleSwitch2))
+        end)
       elseif id == "decoupleSwitch3" then
+        print("🔄 DECOUPLING CHANGED: Switch 3: " .. tostring(oldPreferenceValue) .. " → " .. tostring(newParameterValue))
         local value_send = tonumber(newParameterValue)  -- 0=decoupled, 1=coupled (control_relay)
         local data_type = data_types.Uint8
         local cluster_id = 0xFCC0
         local attr_id = 0x0200  -- Operation mode attribute (exactly as zigbee-herdsman-converters)
         local mfg_code = 0x115F
         device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (3))
+      -- Handle buttonMethod preference changes
+      elseif id == "buttonMethod" then
+        print("🔄 BUTTON METHOD CHANGED: " .. tostring(oldPreferenceValue) .. " → " .. tostring(newParameterValue))
+        print("🔍 Current profile: " .. tostring(device.preferences.profile))
+        print("🔍 Device supports button capability: " .. tostring(device:supports_capability_by_id(button.ID)))
         
-        -- Update component capabilities after decoupling change
-        update_component_capabilities(device)
+        -- Clear any existing button timers when switching methods
+        for endpoint = 1, 3 do
+          local CLICK_TIMER = string.format("button_timer%d", endpoint)
+          local DOWN_COUNTER = string.format("down_counter%d", endpoint)
+          device:set_field(CLICK_TIMER, nil)
+          device:set_field(DOWN_COUNTER, nil)
+          print("🧹 Cleared timers for endpoint " .. endpoint)
+        end
+        
+        -- Force reconfigure the device with the new button method
+        if device.preferences.profile == "lumi_three_switch_button_combined" then
+          print("🔧 FORCING button capability reconfiguration...")
+          
+          -- Force button capability setup regardless of method
+          if device:supports_capability_by_id(button.ID) then
+            print("🔧 Device supports button - initializing...")
+            
+            -- Always emit numberOfButtons and supportedButtonValues
+            device:emit_event(button.numberOfButtons({ value = 3 }))
+            device:emit_event(button.supportedButtonValues({ value = {"pushed", "double"} }))
+            print("🔧 Emitted numberOfButtons=3, supportedValues=[pushed,double]")
+            
+            -- Send device configuration based on method
+            local cluster_base = require "st.zigbee.cluster_base"
+            local data_types = require "st.zigbee.data_types"
+            
+            if newParameterValue == "opple" then
+              print("🔧 SENDING OPPLE CONFIG...")
+              device:send(cluster_base.write_manufacturer_specific_attribute(device,
+                0xFCC0, 0x0009, 0x115F, data_types.Uint8, 0x01))
+              device:send(cluster_base.write_manufacturer_specific_attribute(device,
+                0xFCC0, 0x0125, 0x115F, data_types.Uint8, 0x02))
+              print("🔧 Sent: 0xFCC0/0x0009=1, 0x0125=2")
+                        elseif newParameterValue == "onoff" then
+              print("🔧 ONOFF METHOD: Using decoupling only (0x0009 unsupported)")
+              -- No configuration needed - rely on decoupling (0x0200) only
+            else
+              print("🔧 BUTTON DETECTION DISABLED")
+            end
+            
+            print("✅ Configuration sent for method: " .. newParameterValue)
+          else
+            print("❌ Device does NOT support button capability!")
+          end
+        else
+          print("❌ Wrong profile: " .. tostring(device.preferences.profile))
+        end
+        
+        -- Add test button event to verify capability setup
+        device.thread:call_with_delay(3, function()
+          print("🧪 TESTING button event emission...")
+          if device:supports_capability_by_id(button.ID) then
+            device:emit_event(button.button("pushed", { state_change = true }))
+            print("✅ Test 'pushed' event emitted to main component")
+          else
+            print("❌ Cannot test - device doesn't support button capability")
+          end
+        end)
       end
       -- Call to Create child device
       local profile_type = "child-switch"
@@ -761,59 +1063,7 @@ local function do_configure(driver, device)
   end
 end
 
----- Component to endpoint mapping (similar to 4-button driver) ----
-local function lumi_component_to_endpoint(device, component_id)
-  -- Handle button components
-  if component_id == "button1" then return 1 end
-  if component_id == "button2" then return 2 end  
-  if component_id == "button3" then return 3 end
-  
-  -- Handle switch components (existing mapping)
-  if component_id == "main" then return 1 end
-  if component_id == "switch2" then return 2 end
-  if component_id == "switch3" then return 3 end
-  
-  return 1  -- default
-end
-
----- Endpoint to component mapping (similar to 4-button driver) ----
-local function lumi_endpoint_to_component(device, endpoint)
-  if device.preferences.logDebugPrint == true then
-    print("lumi_endpoint_to_component called - endpoint:", endpoint, "profile:", device.profile.name)
-  end
-  
-  -- For button events in decoupled mode, we want to route to button components
-  if is_lumi_combined_profile(device) then
-    -- Check if the corresponding switch is decoupled
-    local is_decoupled = false
-    local component_id = nil
-    
-    if endpoint == 1 then
-      is_decoupled = device.preferences.decoupleSwitch1 == "0"
-      component_id = is_decoupled and "button1" or "main"
-    elseif endpoint == 2 then
-      is_decoupled = device.preferences.decoupleSwitch2 == "0"
-      component_id = is_decoupled and "button2" or "switch2"
-    elseif endpoint == 3 then
-      is_decoupled = device.preferences.decoupleSwitch3 == "0"
-      component_id = is_decoupled and "button3" or "switch3"
-    else
-      component_id = "main"
-    end
-    
-    if device.preferences.logDebugPrint == true then
-      print("Endpoint", endpoint, "-> component:", component_id, "decoupled:", is_decoupled)
-    end
-    return component_id
-  end
-  
-  -- Default switch component mapping
-  if endpoint == 1 then return "main" end
-  if endpoint == 2 then return "switch2" end
-  if endpoint == 3 then return "switch3" end
-  
-  return "main"
-end
+-- (Duplicate component mapping functions removed - see earlier definitions)
 
 ---device init ----
 local function device_init (driver, device)
@@ -1034,7 +1284,7 @@ local function device_init (driver, device)
     print("DEBUG: Expected profile: lumi_three_switch_button_combined")
     
     -- Setup decoupling for lumi combined profile - moved from do_configure to ensure it always runs
-    if is_lumi_combined_profile(device) then
+    if device.preferences.profile == "lumi_three_switch_button_combined" then
       print("DEBUG: MATCHED lumi combined profile - Running decoupling configuration in device_init!")
       device.thread:call_with_delay(5, function(d)
         print("<< Send preferences for Aqara 3-Switch Decouple (from device_init) >>")
@@ -1067,25 +1317,11 @@ local function device_init (driver, device)
           device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, value_send, mfg_code):to_endpoint (3))
         end
 
-        -- Configure device for button events (based on zigbee-herdsman-converters)
-        device.thread:call_with_delay(2, function(d)
-          print("<<< Configuring Aqara 3-Switch for button events >>>")
-          -- Set "event" mode to enable button events
-          local data_type = data_types.Uint8
-          local cluster_id = 0xFCC0
-          local attr_id = 0x0009  -- mode attribute
-          local mfg_code = 0x115F
-          local mode_value = 1  -- event mode
-          device:send(write.custom_write_attribute(device, cluster_id, attr_id, data_type, mode_value, mfg_code):to_endpoint(1))
-          
-          -- Enable "multiple clicks" mode (based on herdsman converters)
-          device.thread:call_with_delay(1, function(d)
-            print("<<< Enabling multiple clicks mode >>>")
-            local multi_click_attr = 0x0125  -- 293 decimal = 0x0125 hex
-            local multi_click_value = 2  -- enable multiple clicks
-            device:send(write.custom_write_attribute(device, cluster_id, multi_click_attr, data_type, multi_click_value, mfg_code):to_endpoint(1))
-          end)
-        end)
+        -- EXPERIMENT: Skip mode configuration entirely - test if button events work with decoupling alone
+        if device.preferences.logDebugPrint == true then
+          print("🧪 EXPERIMENT: Skipping mode configuration - testing button events with decoupling only")
+          print("🎯 Theory: This device firmware might not support/need mode configuration")
+        end
 
         -- Read current decoupling states after configuration
         device.thread:call_with_delay(5, function(d)
@@ -1346,14 +1582,18 @@ end
 
 --- read zigbee attribute OnOff messages ----
 local function on_off_attr_handler(driver, device, value, zb_rx)
-  -- 🚀 PROFILE DEBUG - This handler IS being called!
-  print("🚀 ON_OFF_HANDLER - model:", device:get_model())
-  print("🚀 ON_OFF_HANDLER - profile:", device.preferences.profile or "nil")
-  print("🚀 ON_OFF_HANDLER - device.profile:", device.profile and device.profile.name or "nil") 
-  print("🚀 ON_OFF_HANDLER - is_lumi_combined:", is_lumi_combined_profile(device))
+  local endpoint = zb_rx.address_header.src_endpoint.value
+  print("🔍 ONOFF_HANDLER: EP" .. endpoint .. " Value=" .. tostring(value.value) .. " Profile=" .. tostring(device.preferences.profile))
+  
+  -- Try Xiaomi-style button detection first
+  lumi_on_off_button_handler(driver, device, value, zb_rx)
+  
+  if device.preferences.logDebugPrint == true then
+    print("OnOff handler - EP:" .. endpoint .. " Value:" .. tostring(value.value))
+  end
   
   -- 🔧 MANUAL INITIALIZATION - Since device_added didn't run but profile detection works
-  if is_lumi_combined_profile(device) and device.network_type ~= "DEVICE_EDGE_CHILD" then
+  if device.preferences.profile == "lumi_three_switch_button_combined" and device.network_type ~= "DEVICE_EDGE_CHILD" then
     -- Check if initialization already happened by testing a device field
     local needs_init = not device:get_field("lumi_button_init")
     
@@ -1397,7 +1637,14 @@ local function on_off_attr_handler(driver, device, value, zb_rx)
       print ("src_endpoint =", zb_rx.address_header.src_endpoint.value , "value =", value.value)
     end
 
-    --- Emit event from zigbee message recived
+    --- Emit event from zigbee message received
+    -- Add debug for Lumi profile component routing
+    if device.preferences.profile == "lumi_three_switch_button_combined" then
+      local target_component = lumi_endpoint_to_component(device, src_endpoint)
+      print("🔧 LUMI ROUTING: EP" .. src_endpoint .. " → component '" .. target_component .. "'")
+    end
+    
+    -- Use standard endpoint routing (works for all profiles)
     if attr_value == false or attr_value == 0 then
       if device:get_model() ~= "2GBatteryDimmer50AU" then
         device:emit_event_for_endpoint(src_endpoint, capabilities.switch.switch.off())
@@ -1433,18 +1680,19 @@ local function on_off_attr_handler(driver, device, value, zb_rx)
 end
 
 
----- Get button component ID for endpoint ----
+---- Get component ID for endpoint (unified components have both switch and button) ----
 local function endpoint_to_button_component(device, endpoint)
   if not is_lumi_combined_profile(device) then
     return nil
   end
   
+  -- With unified components, button events go to the same component as switches
   if endpoint == 1 then
-    return "button1"
+    return "main"
   elseif endpoint == 2 then
-    return "button2" 
+    return "switch2" 
   elseif endpoint == 3 then
-    return "button3"
+    return "switch3"
   end
   return nil
 end
@@ -1480,12 +1728,97 @@ local function map_button_event(code, device)
   return nil -- Unknown event
 end
 
+---- Handle lumi button event from genMultistateInput cluster (OnOff method backup) ----
+local function handle_lumi_multistate_input(driver, device, zb_rx)
+  local cluster_id = zb_rx.address_header.cluster.value
+  local endpoint = zb_rx.address_header.src_endpoint.value
+  local cmd = zb_rx.body.zcl_header.cmd and zb_rx.body.zcl_header.cmd.value or 0
+  
+  if device.preferences.profile ~= "lumi_three_switch_button_combined" then
+    return
+  end
+  
+  local button_method = device.preferences.buttonMethod or "onoff"
+  if button_method ~= "onoff" then
+    if device.preferences.logDebugPrint == true then
+      print("⏭️ MULTISTATE HANDLER: Skipping (method=" .. button_method .. ")")
+    end
+    return  -- Only run for OnOff method as backup
+  end
+  
+  local src_endpoint = zb_rx.address_header.src_endpoint.value
+  local button_component_id = endpoint_to_button_component(device, src_endpoint)
+  
+  -- Extract presentValue from MultistateInput cluster (as per Herdsman)
+  local present_value = nil
+  if zb_rx.body and zb_rx.body.zcl_body and zb_rx.body.zcl_body.attr_records then
+    local attr_records = zb_rx.body.zcl_body.attr_records
+    if attr_records[1] and attr_records[1].data then
+      present_value = attr_records[1].data.value
+    end
+  elseif zb_rx.body and zb_rx.body.zcl_body and zb_rx.body.zcl_body.data then
+    present_value = zb_rx.body.zcl_body.data.value
+  end
+  
+  if not present_value or not button_component_id then
+    if device.preferences.logDebugPrint == true then
+      print("Missing presentValue or component ID")
+    end
+    return
+  end
+  
+  if device.preferences.logDebugPrint == true then
+    print("MultistateInput presentValue:", present_value)
+  end
+  
+  -- Map presentValue to action (as per Herdsman: 1=single, 2=double, 3=triple)
+  local action = nil
+  if present_value == 1 then
+    action = "pushed"  -- single
+  elseif present_value == 2 then  
+    action = "double"  -- double
+  end
+  
+  if action then
+    -- Check if this switch is in decoupled mode
+    local is_decoupled = false
+    if src_endpoint == 1 then
+      is_decoupled = device.preferences.decoupleSwitch1 == "0"
+    elseif src_endpoint == 2 then
+      is_decoupled = device.preferences.decoupleSwitch2 == "0"
+    elseif src_endpoint == 3 then
+      is_decoupled = device.preferences.decoupleSwitch3 == "0"
+    end
+    
+    if device.preferences.logDebugPrint == true then
+      print("Switch " .. src_endpoint .. " decoupled:", is_decoupled)
+    end
+    
+    if is_decoupled then
+      -- Use correct SmartThings button event pattern (like GE Z-Wave)
+      local event = button.button(action, { state_change = true })
+      device:emit_component_event(button_component_id, event)
+      if device.preferences.logDebugPrint == true then
+        print("✅ MultistateInput button event '" .. action .. "' sent to component:", button_component_id)
+      end
+    else
+      if device.preferences.logDebugPrint == true then
+        print("⚠️ Switch " .. src_endpoint .. " is coupled - ignoring button event")
+      end
+    end
+  else
+    if device.preferences.logDebugPrint == true then
+      print("⚠️ Unknown presentValue:", present_value)
+    end
+  end
+end
+
 ---- Handle button events from manufacturer cluster (adapted from 4-button driver approach) ----
 -- Note: Button identifiers 41,42,43 (Herdsman style) vs Event codes 1,2,3 (press types)
 -- - Endpoint identifies which button (1, 2, 3)
 -- - Event codes in ZCL body identify press type: 1=single, 2=double, 3=triple
 local function handle_lumi_button_event_from_cluster(driver, device, zb_rx)
-  if not is_lumi_combined_profile(device) then
+  if device.preferences.profile ~= "lumi_three_switch_button_combined" then
     return
   end
   
@@ -1551,60 +1884,35 @@ local function handle_lumi_button_event_from_cluster(driver, device, zb_rx)
   
   -- Send button event using emit_component_event with correct button component
   if button_component_id and button_action then
-    -- Use emit_component_event instead of emit_event_for_endpoint since device.profile is nil
-    device:emit_component_event(button_component_id, button.button(button_action))
+    -- Use correct SmartThings button event pattern (like GE Z-Wave)
+    local event = button.button(button_action, { state_change = true })
+    device:emit_component_event(button_component_id, event)
     if device.preferences.logDebugPrint == true then
       print("Button event '" .. button_action .. "' sent to component:", button_component_id)
     end
   end
 end
 
----- Handle button events from manufacturer-specific cluster (fallback) ----
-local function handle_lumi_button_event(driver, device, zb_rx)
-  if not is_lumi_combined_profile(device) then
+---- Handle button events from manufacturer-specific cluster (Opple method backup) ----
+local function handle_lumi_button_event_generic(driver, device, zb_rx)
+  if device.preferences.profile ~= "lumi_three_switch_button_combined" then
     return
   end
   
-  local src_endpoint = zb_rx.address_header.src_endpoint.value
-  local button_component_id = endpoint_to_button_component(device, src_endpoint)
+  local button_method = device.preferences.buttonMethod or "onoff"
+  if button_method ~= "opple" then
+    if device.preferences.logDebugPrint == true then
+      print("⏭️ 0xFCC0 HANDLER: Skipping (method=" .. button_method .. ")")
+    end
+    return  -- Only run for Opple method
+  end
   
   if device.preferences.logDebugPrint == true then
-    print("Lumi button event (0xFCC0) - endpoint:", src_endpoint, "button component:", button_component_id)
-    print("Raw message body:", zb_rx.body)
+    print("🔍 0xFCC0 REPORT_ATTRIBUTE: Received data for Opple method")
   end
   
-  -- Check if this switch is in decoupled mode
-  local is_decoupled = false
-  if src_endpoint == 1 then
-    is_decoupled = device.preferences.decoupleSwitch1 == "0"
-  elseif src_endpoint == 2 then
-    is_decoupled = device.preferences.decoupleSwitch2 == "0"
-  elseif src_endpoint == 3 then
-    is_decoupled = device.preferences.decoupleSwitch3 == "0"
-  end
-  
-  if not is_decoupled then
-    return  -- Only handle button events for decoupled switches
-  end
-  
-  -- For manufacturer cluster, emit generic push (fallback)
-  if button_component_id then
-    local button_component = nil
-    if button_component_id == "button1" then
-      button_component = device.profile.components.button1
-    elseif button_component_id == "button2" then
-      button_component = device.profile.components.button2
-    elseif button_component_id == "button3" then
-      button_component = device.profile.components.button3
-    end
-    
-    if button_component then
-      device:emit_component_event(button_component, button.button("pushed"))
-      if device.preferences.logDebugPrint == true then
-        print("Fallback button event 'pushed' sent to component:", button_component_id)
-      end
-    end
-  end
+  -- This could be used as backup for Opple method if 0x00F7 attribute doesn't work
+  -- For now, just log that we received something from the 0xFCC0 cluster
 end
 
 
@@ -1619,7 +1927,7 @@ local function do_added(driver, device)
   
   if device.network_type ~= "DEVICE_EDGE_CHILD" then  ---- device (is NOT Child device)
     -- Handle main device profile-dependent initialization
-    if is_lumi_combined_profile(device) then
+    if device.preferences.profile == "lumi_three_switch_button_combined" then
       print("🚀 LUMI COMBINED PROFILE DETECTED! Initializing button capabilities...")
       
       -- Set component-to-endpoint mapping functions (like 4-button driver)  
@@ -1866,10 +2174,11 @@ local zigbee_outlet_driver_template = {
       },
       -- Handle manufacturer-specific cluster for button events
       [0xFCC0] = {
-        [zcl_global_commands.REPORT_ATTRIBUTE_ID] = handle_lumi_button_event,
+        [zcl_global_commands.REPORT_ATTRIBUTE_ID] = handle_lumi_button_event_generic,
         -- Add more command IDs if needed for button events
         [0xFD] = handle_lumi_button_event_from_cluster,  -- Similar to 4-button driver approach
       },
+
     },
     global = {
      [zcl_clusters.OnOff.ID] = {
@@ -1879,6 +2188,10 @@ local zigbee_outlet_driver_template = {
     attr = {
       [zcl_clusters.OnOff.ID] = {
          [zcl_clusters.OnOff.attributes.OnOff.ID] = on_off_attr_handler
+     },
+     -- Add Opple method handler for 0xFCC0 cluster  
+     [0xFCC0] = {
+       [0x00F7] = handle_opple_button_events,  -- Opple method attribute handler
      },
      [zcl_clusters.Level.ID] = {
         [zcl_clusters.Level.attributes.CurrentLevel.ID] = level_attr_handler
